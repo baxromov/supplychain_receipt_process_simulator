@@ -1,1 +1,33 @@
 .idea
+# Binaries for programs and plugins
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*_test
+
+# Go build cache
+.go/
+go.work.sum
+
+# Dependencies
+vendor/
+
+# Log files
+*.log
+
+# Editor/IDE specific files
+.idea/
+.vscode/
+*.swp
+*.bak
+*.tmp
+
+# Operating System generated files
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
