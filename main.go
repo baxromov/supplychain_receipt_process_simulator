@@ -15,7 +15,7 @@ import (
 
 const (
 	BARCODE_WS = "wss://laundirs-supply-chain-websocket.azurewebsites.net/172.20.163.105-51236"
-	SEND_WS    = "wss://laundirs-supply-chain-websocket.azurewebsites.net/reader-websocket-simulator-channel-1e9a1a5e-ead4-4bdb-8453-ecb9f75594f2-local"
+	SEND_WS    = "wss://laundirs-supply-chain-websocket.azurewebsites.net/reader-websocket-simulator-channel-1e9a1a5e-ead4-4bdb-8453-ecb9f75594f2"
 )
 
 type Payload struct {
@@ -27,11 +27,30 @@ type Payload struct {
 }
 
 type SimulatorOptions struct {
-	Repeat       int  `json:"repeat"`
-	NumberOfTags int  `json:"number_of_tags"`
-	Mix          bool `json:"mix"`
-	WithBarcode  bool `json:"with_barcode"`
-	WithTags     bool `json:"with_tags"`
+	Repeat       int      `json:"repeat"`
+	NumberOfTags int      `json:"number_of_tags"`
+	Mix          bool     `json:"mix"`
+	WithBarcode  bool     `json:"with_barcode"`
+	WithTags     bool     `json:"with_tags"`
+	RFIDs        []string `json:"RFIDs,omitempty"`
+}
+
+func (opt *SimulatorOptions) ResolveEPCs(previous []string) []string {
+	var base []string
+	if opt.Mix {
+		base = previous
+	}
+
+	needed := opt.NumberOfTags - len(opt.RFIDs)
+	if needed < 0 {
+		needed = 0
+	}
+
+	generated := generatePortion(base, needed)
+
+	all := append([]string{}, opt.RFIDs...)
+	all = append(all, generated...)
+	return all
 }
 
 func generateEPC() string {
@@ -43,7 +62,6 @@ func generatePortion(previous []string, numberOfTags int) []string {
 	needed := numberOfTags
 
 	if len(previous) > 0 && len(previous) >= numberOfTags {
-		// Reuse previous EPCs
 		portion = make([]string, len(previous))
 		copy(portion, previous)
 		rand.Shuffle(len(portion), func(i, j int) { portion[i], portion[j] = portion[j], portion[i] })
@@ -198,7 +216,10 @@ func listenForBarcode(ctx context.Context, trigger chan SimulatorOptions) {
 					NumberOfTags: 3,
 					Mix:          false,
 					WithTags:     true,
+					WithBarcode:  false,
+					RFIDs:        []string{},
 				}
+
 				if v, ok := optMap["repeat"].(float64); ok {
 					opts.Repeat = int(v)
 				}
@@ -210,6 +231,16 @@ func listenForBarcode(ctx context.Context, trigger chan SimulatorOptions) {
 				}
 				if v, ok := optMap["with_tags"].(bool); ok {
 					opts.WithTags = v
+				}
+				if v, ok := optMap["with_barcode"].(bool); ok {
+					opts.WithBarcode = v
+				}
+				if rawRFIDs, ok := optMap["RFIDs"].([]interface{}); ok {
+					for _, raw := range rawRFIDs {
+						if epc, ok := raw.(string); ok {
+							opts.RFIDs = append(opts.RFIDs, epc)
+						}
+					}
 				}
 
 				log.Printf("[TRIGGER]: options: %+v", opts)
@@ -239,11 +270,7 @@ func main() {
 		options = <-trigger
 
 		if repeatCounter == 0 {
-			if options.Mix {
-				currentEPCs = generatePortion(currentEPCs, options.NumberOfTags)
-			} else {
-				currentEPCs = generatePortion([]string{}, options.NumberOfTags)
-			}
+			currentEPCs = options.ResolveEPCs(currentEPCs)
 			log.Printf("[PORTION #%d]: EPCs: %v", portionCounter, currentEPCs)
 			portionCounter++
 		}
