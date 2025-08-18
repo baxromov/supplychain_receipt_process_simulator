@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -14,9 +16,24 @@ import (
 )
 
 const (
-	BARCODE_WS = "wss://laundirs-supply-chain-websocket.azurewebsites.net/172.20.163.105-51236"
-	SEND_WS    = "wss://laundirs-supply-chain-websocket.azurewebsites.net/reader-websocket-simulator-channel-1e9a1a5e-ead4-4bdb-8453-ecb9f75594f2"
+	BARCODE_WS       = "wss://laundirs-supply-chain-websocket.azurewebsites.net/172.20.163.105-51236"
+	SEND_WS_TEMPLATE = "wss://laundirs-supply-chain-websocket.azurewebsites.net/reader-websocket-simulator-channel-%s-local"
 )
+
+var SEND_WS string
+
+func init() {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "Unknown"
+	}
+
+	re := regexp.MustCompile(`[^A-Za-z0-9]+`)
+	safeHostname := re.ReplaceAllString(hostname, "-")
+
+	SEND_WS = fmt.Sprintf(SEND_WS_TEMPLATE, safeHostname)
+	fmt.Printf("\033[32m[SEND_WS URL]: %s\033[0m\n", SEND_WS)
+}
 
 type Payload struct {
 	Payload struct {
