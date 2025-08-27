@@ -18,6 +18,7 @@ import (
 const (
 	BARCODE_WS       = "wss://laundirs-supply-chain-websocket.azurewebsites.net/172.20.163.105-51236"
 	SEND_WS_TEMPLATE = "wss://laundirs-supply-chain-websocket.azurewebsites.net/reader-websocket-simulator-channel-%s-local"
+	ReaderMac        = "00:16:25:16:72:59"
 )
 
 var SEND_WS string
@@ -50,6 +51,8 @@ type SimulatorOptions struct {
 	WithBarcode  bool     `json:"with_barcode"`
 	WithTags     bool     `json:"with_tags"`
 	RFIDs        []string `json:"RFIDs,omitempty"`
+
+	TargetWS string `json:"target_ws,omitempty"` // 🎯 qaysi SEND_WS ga yuboriladi
 }
 
 func (opt *SimulatorOptions) ResolveEPCs(previous []string) []string {
@@ -129,7 +132,7 @@ func generateMessagesForPortion(epcs []string) []string {
 		}
 		p.Payload.TagReads = []map[string]interface{}{tag}
 		p.Payload.Status = ""
-		p.Payload.MacAddress = "00:16:25:16:72:59"
+		p.Payload.MacAddress = ReaderMac
 
 		jsonData, _ := json.Marshal(p)
 		messages = append(messages, wrapMessage(string(jsonData)))
@@ -138,34 +141,32 @@ func generateMessagesForPortion(epcs []string) []string {
 }
 
 func wrapMessage(jsonStr string) string {
-	return fmt.Sprintf("MESSAGE\ndestination:/live-track/00:16:25:16:72:59\ncontent-type:application/json\n\n%s\u0000", jsonStr)
+	return fmt.Sprintf("MESSAGE\ndestination:/live-track/%s\ncontent-type:application/json\n\n%s\u0000", ReaderMac, jsonStr)
 }
 
-func sendReaderData(epcs []string, withTags bool) {
-	conn, _, err := websocket.DefaultDialer.Dial(SEND_WS, nil)
+func sendReaderData(epcs []string, withTags bool, targetWS string) {
+	conn, _, err := websocket.DefaultDialer.Dial(targetWS, nil)
 	if err != nil {
 		log.Println("[ERROR CONNECTING TO SEND_WS]:", err)
 		return
 	}
 	defer conn.Close()
 
-	start := `{"payload":{"tag_reads":null,"status_message":"START","mac_address":"00:16:25:16:72:59"}}`
-	stop := `{"payload":{"tag_reads":null,"status_message":"STOP","mac_address":"00:16:25:16:72:59"}}`
+	start := `{"payload":{"tag_reads":null,"status_message":"START","mac_address":"` + ReaderMac + `"}}`
+	stop := `{"payload":{"tag_reads":null,"status_message":"STOP","mac_address":"` + ReaderMac + `"}}`
 
-	err = conn.WriteMessage(websocket.TextMessage, []byte(wrapMessage(start)))
-	if err != nil {
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(wrapMessage(start))); err != nil {
 		log.Println("[ERROR SENDING START]:", err)
 		return
 	}
-	log.Println("[SENT]: START")
+	log.Printf("[SENT TO %s]: START", targetWS)
 	time.Sleep(100 * time.Millisecond)
 
 	if withTags {
-		log.Println("[SENDING TAG MESSAGES]")
+		log.Printf("[SENDING TAG MESSAGES TO %s]", targetWS)
 		messages := generateMessagesForPortion(epcs)
 		for _, msg := range messages {
-			err := conn.WriteMessage(websocket.TextMessage, []byte(msg))
-			if err != nil {
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(msg)); err != nil {
 				log.Println("[ERROR SENDING]:", err)
 				break
 			}
@@ -176,11 +177,10 @@ func sendReaderData(epcs []string, withTags bool) {
 		log.Println("[NO TAGS]")
 	}
 
-	err = conn.WriteMessage(websocket.TextMessage, []byte(wrapMessage(stop)))
-	if err != nil {
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(wrapMessage(stop))); err != nil {
 		log.Println("[ERROR SENDING STOP]:", err)
 	}
-	log.Println("[SENT]: STOP")
+	log.Printf("[SENT TO %s]: STOP", targetWS)
 	time.Sleep(100 * time.Millisecond)
 }
 
@@ -235,6 +235,7 @@ func listenForBarcode(ctx context.Context, trigger chan SimulatorOptions) {
 					WithTags:     true,
 					WithBarcode:  false,
 					RFIDs:        []string{},
+					TargetWS:     SEND_WS, // default
 				}
 
 				if v, ok := optMap["repeat"].(float64); ok {
@@ -258,6 +259,9 @@ func listenForBarcode(ctx context.Context, trigger chan SimulatorOptions) {
 							opts.RFIDs = append(opts.RFIDs, epc)
 						}
 					}
+				}
+				if v, ok := optMap["target_ws"].(string); ok && v != "" {
+					opts.TargetWS = v
 				}
 
 				log.Printf("[TRIGGER]: options: %+v", opts)
@@ -293,7 +297,7 @@ func main() {
 		}
 
 		log.Printf("[REPEAT %d] Portion EPCs: %v", repeatCounter+1, currentEPCs)
-		sendReaderData(currentEPCs, options.WithTags)
+		sendReaderData(currentEPCs, options.WithTags, options.TargetWS)
 
 		repeatCounter++
 		if repeatCounter >= options.Repeat {
